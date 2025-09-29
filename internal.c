@@ -53,7 +53,6 @@ int main(int argc, char *argv[])
 
     else if (strcmp(operation, "close") == 0)
     {
-        // This is where we'll put the code to handle "open" operation
         pthread_mutex_lock(&shm_ptr->mutex);
         shm_ptr->close_button = 1;
         pthread_cond_broadcast(&shm_ptr->cond);
@@ -62,7 +61,6 @@ int main(int argc, char *argv[])
 
     else if (strcmp(operation, "stop") == 0)
     {
-        // This is where we'll put the code to handle "open" operation
         pthread_mutex_lock(&shm_ptr->mutex);
         shm_ptr->emergency_stop = 1;
         pthread_cond_broadcast(&shm_ptr->cond);
