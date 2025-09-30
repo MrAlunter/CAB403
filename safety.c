@@ -39,11 +39,13 @@ int main(int argc, char *argv[])
     {
         pthread_mutex_lock(&shm_ptr->mutex);
 
-        // Safety status check
+        // Set it back to 1 if it's not 1 (this is the heartbeat)
         if (shm_ptr->safety_system != 1)
         {
             shm_ptr->safety_system = 1;
+            pthread_cond_broadcast(&shm_ptr->cond);
         }
+        pthread_cond_broadcast(&shm_ptr->cond);
 
         // Door obstruction check
         if (shm_ptr->door_obstruction == 1 && strcmp(shm_ptr->status, "Closing") == 0)
@@ -66,20 +68,11 @@ int main(int argc, char *argv[])
         {
             printf("SAFETY: Overload detected for car %s!\n", car_name);
             shm_ptr->emergency_mode = 1;
-            shm_ptr->overload = 0; // Reset the flag
-            pthread_cond_broadcast(&shm_ptr->cond);
-        }
-
-        if (shm_ptr->open_button > 1 || shm_ptr->close_button > 1)
-        {
-            printf("SAFETY: Data consistency error for car %s!\n", car_name);
-            shm_ptr->emergency_mode = 1;
+            shm_ptr->overload = 0;
             pthread_cond_broadcast(&shm_ptr->cond);
         }
 
         pthread_mutex_unlock(&shm_ptr->mutex);
-        usleep(10000); // Wait 10ms to prevent high CPU usage
+        usleep(10000); //
     }
-
-    return 0; // Will not be reached
 }

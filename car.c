@@ -86,34 +86,31 @@ typedef struct
     int delay;
 } network_thread_args;
 
-// --- Network thread function ---
-// --- Network thread function ---
-// --- Network thread function ---
 void *network_thread_function(void *args)
 {
     network_thread_args *thread_args = (network_thread_args *)args;
     car_shared_mem *shm_ptr = thread_args->shm_ptr;
     int delay_ms = thread_args->delay;
-    int sockfd;
 
-    while (1) // Outer loop to handle reconnection
+    while (1) // Outer reconnection loop
     {
-        // --- Connection Loop ---
+        // Wait if in service/emergency mode
+        pthread_mutex_lock(&shm_ptr->mutex);
+        while (shm_ptr->individual_service_mode == 1 || shm_ptr->emergency_mode == 1)
+        {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += (delay_ms * 1000000L);
+            ts.tv_sec += ts.tv_nsec / 1000000000L;
+            ts.tv_nsec = ts.tv_nsec % 1000000000L;
+            pthread_cond_timedwait(&shm_ptr->cond, &shm_ptr->mutex, &ts);
+        }
+        pthread_mutex_unlock(&shm_ptr->mutex);
+
+        // Try to connect (with retries)
+        int sockfd;
         while (1)
         {
-            // Check if we should even try to connect
-            pthread_mutex_lock(&shm_ptr->mutex);
-            int should_connect = (shm_ptr->individual_service_mode == 0 &&
-                                  shm_ptr->emergency_mode == 0 &&
-                                  shm_ptr->safety_system == 1);
-            pthread_mutex_unlock(&shm_ptr->mutex);
-
-            if (!should_connect)
-            {
-                usleep(delay_ms * 1000);
-                continue;
-            }
-
             sockfd = socket(AF_INET, SOCK_STREAM, 0);
             if (sockfd == -1)
             {
@@ -128,21 +125,18 @@ void *network_thread_function(void *args)
             server_address.sin_port = htons(CONTROLLER_PORT);
             inet_pton(AF_INET, CONTROLLER_IP, &server_address.sin_addr);
 
-            if (connect(sockfd, (struct sockaddr *)&server_address, sizeof(server_address)) == -1)
-            {
-                printf("Car '%s' failed to connect. Retrying in %dms...\n", thread_args->car_name, delay_ms);
-                close(sockfd);
-                usleep(delay_ms * 1000);
-                continue;
-            }
-            else
+            if (connect(sockfd, (struct sockaddr *)&server_address, sizeof(server_address)) == 0)
             {
                 printf("Car '%s' connected to controller.\n", thread_args->car_name);
-                break;
+                break; // Connected successfully
             }
+
+            printf("Car '%s' failed to connect. Retrying in %dms...\n", thread_args->car_name, delay_ms);
+            close(sockfd);
+            usleep(delay_ms * 1000);
         }
 
-        // --- Registration Message ---
+        // Send registration message
         char message_buffer[BUFFER_SIZE];
         sprintf(message_buffer, "CAR %s %s %s",
                 thread_args->car_name,
@@ -155,45 +149,45 @@ void *network_thread_function(void *args)
         send(sockfd, message_buffer, len, 0);
         printf("Registered with controller: [%s]\n", message_buffer);
 
-        // Set socket to non-blocking mode
+        // Set socket to non-blocking
         int flags = fcntl(sockfd, F_GETFL, 0);
         fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
 
-        // --- Main communication loop ---
+        // Main communication loop
         int should_disconnect = 0;
         while (!should_disconnect)
         {
-            // Check for individual service mode or emergency mode
+            // Check for service modes
             pthread_mutex_lock(&shm_ptr->mutex);
             if (shm_ptr->individual_service_mode == 1)
             {
+                pthread_mutex_unlock(&shm_ptr->mutex);
                 printf("Entering individual service mode, disconnecting...\n");
                 char msg[] = "INDIVIDUAL SERVICE";
                 len = strlen(msg);
                 net_len = htons(len);
                 send(sockfd, &net_len, sizeof(net_len), 0);
                 send(sockfd, msg, len, 0);
+                close(sockfd);
                 should_disconnect = 1;
+                break;
             }
-            else if (shm_ptr->emergency_mode == 1)
+            if (shm_ptr->emergency_mode == 1)
             {
+                pthread_mutex_unlock(&shm_ptr->mutex);
                 printf("Entering emergency mode, disconnecting...\n");
                 char msg[] = "EMERGENCY";
                 len = strlen(msg);
                 net_len = htons(len);
                 send(sockfd, &net_len, sizeof(net_len), 0);
                 send(sockfd, msg, len, 0);
+                close(sockfd);
                 should_disconnect = 1;
+                break;
             }
             pthread_mutex_unlock(&shm_ptr->mutex);
 
-            if (should_disconnect)
-            {
-                close(sockfd);
-                break; // Break inner loop, go back to outer loop
-            }
-
-            // Try to receive messages from controller
+            // Try to receive messages from controller (non-blocking)
             uint16_t msg_len_network;
             ssize_t bytes_received = recv(sockfd, &msg_len_network, sizeof(msg_len_network), 0);
 
@@ -212,7 +206,6 @@ void *network_thread_function(void *args)
                     }
                     else if (n == 0)
                     {
-                        // Connection closed
                         should_disconnect = 1;
                         break;
                     }
@@ -239,10 +232,41 @@ void *network_thread_function(void *args)
                 }
             }
 
-            // Send status update
+            // Wait before sending status update
             usleep(delay_ms * 1000);
+
+            // Safety check and send status
             pthread_mutex_lock(&shm_ptr->mutex);
 
+            // Increment safety counter if safety system is active
+            if (shm_ptr->safety_system == 1)
+            {
+                shm_ptr->safety_system++;
+                if (shm_ptr->safety_system >= 3)
+                {
+                    printf("Safety system disconnected! Entering emergency mode.\n");
+                    shm_ptr->emergency_mode = 1;
+                    pthread_cond_broadcast(&shm_ptr->cond);
+
+                    char msg[] = "EMERGENCY";
+                    len = strlen(msg);
+                    net_len = htons(len);
+                    send(sockfd, &net_len, sizeof(net_len), 0);
+                    send(sockfd, msg, len, 0);
+                    pthread_mutex_unlock(&shm_ptr->mutex);
+                    close(sockfd);
+                    break;
+                }
+            }
+
+            // Check again before sending status (race condition protection)
+            if (shm_ptr->individual_service_mode == 1 || shm_ptr->emergency_mode == 1)
+            {
+                pthread_mutex_unlock(&shm_ptr->mutex);
+                continue;
+            }
+
+            // Send status update
             char status_message[BUFFER_SIZE];
             sprintf(status_message, "STATUS %s %s %s",
                     shm_ptr->status,
@@ -256,12 +280,12 @@ void *network_thread_function(void *args)
             if (send(sockfd, &net_len, sizeof(net_len), 0) == -1 ||
                 send(sockfd, status_message, len, 0) == -1)
             {
-                // Send failed, connection probably closed
                 printf("Failed to send status, disconnecting...\n");
                 close(sockfd);
                 break;
             }
         }
+        // Loop back to reconnection
     }
 
     return NULL;
@@ -354,12 +378,21 @@ int main(int argc, char *argv[])
     {
         pthread_mutex_lock(&shm_ptr->mutex);
 
+        // Don't do anything in emergency mode
+        if (shm_ptr->emergency_mode == 1)
+        {
+            shm_ptr->open_button = 1; // Open doors in emergency
+            pthread_cond_wait(&shm_ptr->cond, &shm_ptr->mutex);
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            continue;
+        }
+
         // Check if we need to move (don't wait if we're ready to move)
         if (strcmp(shm_ptr->status, "Closed") == 0 &&
             strcmp(shm_ptr->current_floor, shm_ptr->destination_floor) != 0)
         {
-            // Don't wait, handle movement immediately
-            // (fall through to movement handling below)
+            // Ready to move, don't wait
+            pthread_mutex_unlock(&shm_ptr->mutex);
         }
         else
         {
@@ -388,7 +421,6 @@ int main(int argc, char *argv[])
             }
 
             struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
             long nsec = ts.tv_nsec + (delay * 1000000L);
             ts.tv_sec += nsec / 1000000000L;
             ts.tv_nsec = nsec % 1000000000L;
