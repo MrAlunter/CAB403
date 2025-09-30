@@ -2,7 +2,7 @@
 
 // Tester for car (Individual service mode, no controller)
 
-#define DELAY 50000 // 50ms
+#define DELAY 50000      // 50ms
 #define MILLISECOND 1000 // 1ms
 
 void displaycond(car_shared_mem *);
@@ -101,24 +101,24 @@ void displaycond(car_shared_mem *s)
 {
   pthread_mutex_lock(&s->mutex);
   printf("Current state: {%s, %s, %s, %d, %d, %d, %d, %d, %d, %d}\n",
-    s->current_floor,
-    s->destination_floor,
-    s->status,
-    s->open_button,
-    s->close_button,
-    s->door_obstruction,
-    s->overload,
-    s->emergency_stop,
-    s->individual_service_mode,
-    s->emergency_mode
-  );
+         s->current_floor,
+         s->destination_floor,
+         s->status,
+         s->open_button,
+         s->close_button,
+         s->door_obstruction,
+         s->overload,
+         s->emergency_stop,
+         s->individual_service_mode,
+         s->emergency_mode);
   pthread_mutex_unlock(&s->mutex);
 }
 
 pid_t car(const char *name, const char *lowest_floor, const char *highest_floor, const char *delay)
 {
   pid_t pid = fork();
-  if (pid == 0) {
+  if (pid == 0)
+  {
     execlp("./car", "./car", name, lowest_floor, highest_floor, delay, NULL);
   }
   usleep(DELAY);

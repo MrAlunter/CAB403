@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <pthread.h>
 
 #define CONTROLLER_PORT 3000
 #define BACKLOG 10
@@ -19,19 +20,39 @@ typedef struct Node
 typedef struct
 {
     char name[50];
-    int is_active; // A flag to know if this car is online
+    int is_active;
+    int sockfd;
 
-    // Status info from the car's status updates
+    int lowest_floor;
+    int highest_floor;
+
     char current_floor[4];
     char destination_floor[4];
     char status[8];
 
-    // The two queues
     Node *up_queue;
     Node *down_queue;
 } Car;
 
 Car connected_cars[10];
+pthread_mutex_t cars_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Forward declarations
+void receiveMessage(int sockfd, char *buffer, int buffer_size);
+void handleCarRegistration(const char *car_name, const char *lowest_floor, const char *highest_floor, int sockfd);
+void handleCallRequest(const char *source_floor, const char *destination_floor, int client_fd);
+
+int floor_to_int(const char *floor_str)
+{
+    if (floor_str[0] == 'B')
+    {
+        return -atoi(&floor_str[1]);
+    }
+    else
+    {
+        return atoi(floor_str);
+    }
+}
 
 void add_to_queue(Node **head, const char *floor)
 {
@@ -54,13 +75,37 @@ void add_to_queue(Node **head, const char *floor)
     }
 }
 
-void handleCarRegistration(const char *car_name, const char *lowest_floor, const char *highest_floor)
+void receiveMessage(int sockfd, char *buffer, int buffer_size)
 {
+    uint16_t len;
+    if (recv(sockfd, &len, sizeof(len), 0) != sizeof(len))
+    {
+        buffer[0] = '\0';
+        return;
+    }
+    len = ntohs(len);
+
+    if (len >= buffer_size)
+    {
+        fprintf(stderr, "Received message is too large for buffer\n");
+        buffer[0] = '\0';
+        return;
+    }
+
+    recv(sockfd, buffer, len, 0);
+    buffer[len] = '\0';
+}
+
+void handleCarRegistration(const char *car_name, const char *lowest_floor, const char *highest_floor, int sockfd)
+{
+    pthread_mutex_lock(&cars_mutex);
+
     for (int i = 0; i < 10; i++)
     {
         if (connected_cars[i].is_active && strcmp(connected_cars[i].name, car_name) == 0)
         {
-            // Car is already registered
+            connected_cars[i].sockfd = sockfd;
+            pthread_mutex_unlock(&cars_mutex);
             return;
         }
     }
@@ -71,71 +116,159 @@ void handleCarRegistration(const char *car_name, const char *lowest_floor, const
         {
             strcpy(connected_cars[i].name, car_name);
             connected_cars[i].is_active = 1;
+            connected_cars[i].sockfd = sockfd;
             strcpy(connected_cars[i].current_floor, lowest_floor);
             strcpy(connected_cars[i].destination_floor, lowest_floor);
             strcpy(connected_cars[i].status, "Closed");
+            connected_cars[i].lowest_floor = floor_to_int(lowest_floor);
+            connected_cars[i].highest_floor = floor_to_int(highest_floor);
             connected_cars[i].up_queue = NULL;
             connected_cars[i].down_queue = NULL;
             printf("Registered new car: %s (Floors: %s to %s)\n", car_name, lowest_floor, highest_floor);
+            pthread_mutex_unlock(&cars_mutex);
             return;
         }
     }
 
     printf("No space to register new car: %s\n", car_name);
+    pthread_mutex_unlock(&cars_mutex);
 }
 
-// --- Helper Function ---
-void receiveMessage(int sockfd, char *buffer, int buffer_size)
-{
-    uint16_t len;
-    if (recv(sockfd, &len, sizeof(len), 0) != sizeof(len))
-    {
-        return; // Client disconnected or error
-    }
-    len = ntohs(len);
-
-    if (len >= buffer_size)
-    {
-        fprintf(stderr, "Received message is too large for buffer\n");
-        return;
-    }
-
-    recv(sockfd, buffer, len, 0);
-    buffer[len] = '\0';
-}
-
-void handleCallRequest(const char *source_floor, const char *destination_floor)
+void handleCallRequest(const char *source_floor, const char *destination_floor, int client_fd)
 {
     printf("Handling call request from %s to %s\n", source_floor, destination_floor);
-    // For simplicity, just assign to the first active car
+
+    int source = floor_to_int(source_floor);
+    int dest = floor_to_int(destination_floor);
+
+    pthread_mutex_lock(&cars_mutex);
+
     for (int i = 0; i < 10; i++)
     {
         if (connected_cars[i].is_active)
         {
-            if (strcmp(source_floor, destination_floor) < 0)
+            if (source >= connected_cars[i].lowest_floor &&
+                source <= connected_cars[i].highest_floor &&
+                dest >= connected_cars[i].lowest_floor &&
+                dest <= connected_cars[i].highest_floor)
             {
-                add_to_queue(&connected_cars[i].up_queue, source_floor);
-                add_to_queue(&connected_cars[i].up_queue, destination_floor);
+                char floor_msg[BUFFER_SIZE];
+                sprintf(floor_msg, "FLOOR %s", source_floor);
+                uint16_t len = strlen(floor_msg);
+                uint16_t net_len = htons(len);
+                send(connected_cars[i].sockfd, &net_len, sizeof(net_len), 0);
+                send(connected_cars[i].sockfd, floor_msg, len, 0);
+
+                printf("Assigned call to car: %s, sent FLOOR %s\n", connected_cars[i].name, source_floor);
+
+                char ack[BUFFER_SIZE];
+                sprintf(ack, "%s", connected_cars[i].name);
+                len = strlen(ack);
+                net_len = htons(len);
+                send(client_fd, &net_len, sizeof(net_len), 0);
+                send(client_fd, ack, len, 0);
+
+                pthread_mutex_unlock(&cars_mutex);
+                return;
             }
-            else
-            {
-                add_to_queue(&connected_cars[i].down_queue, source_floor);
-                add_to_queue(&connected_cars[i].down_queue, destination_floor);
-            }
-            printf("Assigned call to car: %s\n", connected_cars[i].name);
-            return;
         }
     }
+
+    pthread_mutex_unlock(&cars_mutex);
+
     printf("No active cars to handle the call request.\n");
+    char error[] = "UNAVAILABLE";
+    uint16_t len = strlen(error);
+    uint16_t net_len = htons(len);
+    send(client_fd, &net_len, sizeof(net_len), 0);
+    send(client_fd, error, len, 0);
 }
 
-// --- Main Program Logic ---
+void *handleConnection(void *arg)
+{
+    int sockfd = *(int *)arg;
+    free(arg);
+
+    char buffer[BUFFER_SIZE];
+    receiveMessage(sockfd, buffer, sizeof(buffer));
+    printf("Received message: [%s]\n", buffer);
+
+    if (strncmp(buffer, "CAR", 3) == 0)
+    {
+        char car_name[50], lowest[4], highest[4];
+        sscanf(buffer, "%*s %49s %3s %3s", car_name, lowest, highest);
+        handleCarRegistration(car_name, lowest, highest, sockfd);
+        printf("Car %s connected on socket %d\n", car_name, sockfd);
+
+        while (1)
+        {
+            receiveMessage(sockfd, buffer, sizeof(buffer));
+            if (buffer[0] == '\0')
+            {
+                printf("Car %s disconnected\n", car_name);
+                pthread_mutex_lock(&cars_mutex);
+                for (int i = 0; i < 10; i++)
+                {
+                    if (connected_cars[i].sockfd == sockfd)
+                    {
+                        connected_cars[i].is_active = 0;
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&cars_mutex);
+                break;
+            }
+
+            if (strncmp(buffer, "STATUS", 6) == 0)
+            {
+                char status[8], current[4], dest[4];
+                sscanf(buffer, "%*s %7s %3s %3s", status, current, dest);
+
+                pthread_mutex_lock(&cars_mutex);
+                for (int i = 0; i < 10; i++)
+                {
+                    if (connected_cars[i].sockfd == sockfd)
+                    {
+                        strcpy(connected_cars[i].status, status);
+                        strcpy(connected_cars[i].current_floor, current);
+                        strcpy(connected_cars[i].destination_floor, dest);
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&cars_mutex);
+            }
+        }
+    }
+    else if (strncmp(buffer, "CALL", 4) == 0)
+    {
+        char source[4], dest[4];
+        sscanf(buffer, "%*s %3s %3s", source, dest);
+        handleCallRequest(source, dest, sockfd);
+    }
+    else
+    {
+        const char *reply = "ERROR Unknown command";
+        uint16_t len = strlen(reply);
+        uint16_t net_len = htons(len);
+        send(sockfd, &net_len, sizeof(net_len), 0);
+        send(sockfd, reply, len, 0);
+    }
+
+    close(sockfd);
+    return NULL;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc != 1)
     {
         fprintf(stderr, "Usage: %s (no arguments)\n", argv[0]);
         return 1;
+    }
+
+    for (int i = 0; i < 10; i++)
+    {
+        connected_cars[i].is_active = 0;
     }
 
     int listenfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -177,53 +310,17 @@ int main(int argc, char *argv[])
         if (clientfd == -1)
         {
             perror("accept");
-            continue; // Don't crash, just try to accept the next one
+            continue;
         }
 
         printf("Accepted a new connection.\n");
 
-        char buffer[BUFFER_SIZE];
-        receiveMessage(clientfd, buffer, sizeof(buffer));
-        printf("Received message: [%s]\n", buffer);
-
-        if (strncmp(buffer, "CALL", 4) == 0)
-        {
-            char source[4], dest[4];
-            sscanf(buffer, "%*s %3s %3s", source, dest);
-
-            handleCallRequest(source, dest);
-            const char *reply = "ACK Call request received";
-            uint16_t len = strlen(reply);
-            uint16_t net_len = htons(len);
-            send(clientfd, &net_len, sizeof(net_len), 0);
-            send(clientfd, reply, len, 0);
-            printf("Sent reply: [%s]\n", reply);
-            close(clientfd);
-            printf("Closed connection.\n\n");
-        }
-
-        else if (strncmp(buffer, "CAR", 3) == 0)
-        {
-            // It's a car registration message
-            char car_name[50], lowest[4], highest[4];
-            sscanf(buffer, "%*s %49s %3s %3s", car_name, lowest, highest);
-
-            // Call your function to add the car to the list
-            handleCarRegistration(car_name, lowest, highest);
-        }
-
-        else
-        {
-            const char *reply = "ERROR Unknown command";
-            uint16_t len = strlen(reply);
-            uint16_t net_len = htons(len);
-            send(clientfd, &net_len, sizeof(net_len), 0);
-            send(clientfd, reply, len, 0);
-            printf("Sent reply: [%s]\n", reply);
-            close(clientfd);
-            printf("Closed connection.\n\n");
-        }
+        int *sockfd_ptr = malloc(sizeof(int));
+        *sockfd_ptr = clientfd;
+        pthread_t thread;
+        pthread_create(&thread, NULL, handleConnection, sockfd_ptr);
+        pthread_detach(thread);
     }
 
-    return 0; // This line will not be reached
+    return 0;
 }

@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -16,6 +18,44 @@ void sendMessage(int sockfd, const char *msg)
     uint16_t net_len = htons(len);
     send(sockfd, &net_len, sizeof(net_len), 0);
     send(sockfd, msg, len, 0);
+}
+
+bool is_floor_valid(const char *floor_str)
+{
+    // Check if the string is empty or too long
+    if (strlen(floor_str) == 0 || strlen(floor_str) > 3)
+    {
+        return false;
+    }
+
+    // --- First if statement: Handle Basement Floors ---
+    if (floor_str[0] == 'B')
+    {
+        // Check if the rest of the string is a number
+        for (int i = 1; i < strlen(floor_str); i++)
+        {
+            if (!isdigit(floor_str[i]))
+                return false;
+        }
+        int floor_num = atoi(floor_str + 1);
+        return (floor_num >= 1 && floor_num <= 99);
+    }
+
+    // --- Second if statement: Handle Regular Floors ---
+    else if (isdigit(floor_str[0]))
+    {
+        // Check if all characters are numbers
+        for (int i = 0; i < strlen(floor_str); i++)
+        {
+            if (!isdigit(floor_str[i]))
+                return false;
+        }
+        int floor_num = atoi(floor_str);
+        return (floor_num >= 1 && floor_num <= 999);
+    }
+
+    // If it doesn't start with 'B' or a digit, it's invalid
+    return false;
 }
 
 void receiveMessage(int sockfd, char *buffer, int buffer_size)
@@ -47,6 +87,19 @@ int main(int argc, char *argv[])
 
     char *source_floor = argv[1];
     char *destination_floor = argv[2];
+
+    if (!is_floor_valid(source_floor) || !is_floor_valid(destination_floor))
+    {
+        printf("Invalid floor(s) specified.\n");
+        return 1;
+    }
+
+    // If source and destination are the same
+    if (strcmp(source_floor, destination_floor) == 0)
+    {
+        printf("You are already on that floor!\n");
+        return 0;
+    }
 
     // 2. Create a TCP socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -82,9 +135,9 @@ int main(int argc, char *argv[])
     receiveMessage(sockfd, reply_buffer, sizeof(reply_buffer));
 
     // 7. Process the reply
-    if (strncmp(reply_buffer, "CAR ", 4) == 0)
+    if (strcmp(reply_buffer, "UNAVAILABLE") != 0)
     {
-        printf("%s is arriving.\n", reply_buffer);
+        printf("Car %s is arriving.\n", reply_buffer);
     }
     else
     {

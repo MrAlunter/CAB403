@@ -1,10 +1,50 @@
 #include "shared.h"
+#include <stdbool.h>
+#include <ctype.h>
 
 // Tester for call point
 
 #define DELAY 50000 // 50ms
 
 void *server(void *);
+
+bool is_floor_valid(const char *floor_str)
+{
+  // Check if the string is empty or too long
+  if (strlen(floor_str) == 0 || strlen(floor_str) > 3)
+  {
+    return false;
+  }
+
+  // --- First if statement: Handle Basement Floors ---
+  if (floor_str[0] == 'B')
+  {
+    // Check if the rest of the string is a number
+    for (int i = 1; i < strlen(floor_str); i++)
+    {
+      if (!isdigit(floor_str[i]))
+        return false;
+    }
+    int floor_num = atoi(floor_str + 1);
+    return (floor_num >= 1 && floor_num <= 99);
+  }
+
+  // --- Second if statement: Handle Regular Floors ---
+  else if (isdigit(floor_str[0]))
+  {
+    // Check if all characters are numbers
+    for (int i = 0; i < strlen(floor_str); i++)
+    {
+      if (!isdigit(floor_str[i]))
+        return false;
+    }
+    int floor_num = atoi(floor_str);
+    return (floor_num >= 1 && floor_num <= 999);
+  }
+
+  // If it doesn't start with 'B' or a digit, it's invalid
+  return false;
+}
 
 int main()
 {
@@ -46,7 +86,8 @@ void *server(void *_)
   int s = socket(AF_INET, SOCK_STREAM, 0);
   int opt_enable = 1;
   setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt_enable, sizeof(opt_enable));
-  if (bind(s, (const struct sockaddr *)&a, sizeof(a)) == -1) {
+  if (bind(s, (const struct sockaddr *)&a, sizeof(a)) == -1)
+  {
     perror("bind()");
     exit(1);
   }
@@ -79,4 +120,3 @@ void *server(void *_)
   close(fd);
   return NULL;
 }
-
