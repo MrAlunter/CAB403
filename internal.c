@@ -5,6 +5,34 @@
 #include <unistd.h>   // For close
 #include "shared.h"
 
+// Helper function to convert floor string to integer------------------------------
+
+int floor_to_int(const char *floor_str)
+{
+    if (floor_str[0] == 'B')
+    {
+        return -atoi(&floor_str[1]);
+    }
+    else
+    {
+        return atoi(floor_str);
+    }
+}
+
+void int_to_floor(int floor_num, char *floor_str)
+{
+    if (floor_num < 0)
+    {
+        sprintf(floor_str, "B%d", -floor_num);
+    }
+    else
+    {
+        sprintf(floor_str, "%d", floor_num);
+    }
+}
+
+// End of helper functions ---------------------
+
 int main(int argc, char *argv[])
 {
     if (argc != 3)
@@ -37,18 +65,11 @@ int main(int argc, char *argv[])
 
     else if (strcmp(operation, "open") == 0)
     {
-
         pthread_mutex_lock(&shm_ptr->mutex);
         shm_ptr->open_button = 1;
         pthread_cond_broadcast(&shm_ptr->cond);
         pthread_mutex_unlock(&shm_ptr->mutex);
         printf("Signalled car %s to open doors.\n", car_name);
-
-        if (shm_ptr == MAP_FAILED)
-        {
-            printf("Memory mapping failed.\n");
-            return 1;
-        }
     }
 
     else if (strcmp(operation, "close") == 0)
@@ -69,11 +90,105 @@ int main(int argc, char *argv[])
 
     else if (strcmp(operation, "service_on") == 0)
     {
-        // This is where we'll put the code to handle "open" operation
-
         pthread_mutex_lock(&shm_ptr->mutex);
         shm_ptr->individual_service_mode = 1;
+        shm_ptr->emergency_mode = 0;
         pthread_cond_broadcast(&shm_ptr->cond);
+        pthread_mutex_unlock(&shm_ptr->mutex);
+    }
+
+    else if (strcmp(operation, "service_off") == 0)
+    {
+        pthread_mutex_lock(&shm_ptr->mutex);
+        shm_ptr->individual_service_mode = 0;
+        pthread_cond_broadcast(&shm_ptr->cond);
+        pthread_mutex_unlock(&shm_ptr->mutex);
+    }
+
+    else if (strcmp(operation, "up") == 0)
+    {
+        pthread_mutex_lock(&shm_ptr->mutex);
+        if (shm_ptr->individual_service_mode != 1)
+        {
+            printf("Operation only allowed in service mode.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+
+        if (strcmp(shm_ptr->status, "Closed") != 0)
+        {
+            printf("Operation not allowed while doors are open.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+
+        if (strcmp(shm_ptr->status, "Between") == 0)
+        {
+            printf("Operation not allowed while elevator is moving.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+
+        int current_floor = floor_to_int(shm_ptr->current_floor);
+        int destination_floor = current_floor + 1;
+        if (destination_floor == 0)
+        {
+            destination_floor = 1; // B1 -> 1
+        }
+        char dest_floor_str[4];
+        int_to_floor(destination_floor, dest_floor_str);
+        strcpy(shm_ptr->destination_floor, dest_floor_str);
+        pthread_cond_broadcast(&shm_ptr->cond);
+        printf("Signalled car %s to move up to floor %s.\n", car_name, dest_floor_str);
+        pthread_mutex_unlock(&shm_ptr->mutex);
+    }
+
+    else if (strcmp(operation, "down") == 0)
+    {
+        pthread_mutex_lock(&shm_ptr->mutex);
+        if (shm_ptr->individual_service_mode != 1)
+        {
+            printf("Operation only allowed in service mode.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+
+        if (strcmp(shm_ptr->status, "Closed") != 0)
+        {
+            printf("Operation not allowed while doors are open.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+
+        if (strcmp(shm_ptr->status, "Between") == 0)
+        {
+            printf("Operation not allowed while elevator is moving.\n");
+            pthread_mutex_unlock(&shm_ptr->mutex);
+            munmap(shm_ptr, sizeof(car_shared_mem));
+            close(fd);
+            return 1;
+        }
+        int current_floor = floor_to_int(shm_ptr->current_floor);
+        int destination_floor = current_floor - 1; // Move down one floor
+        if (destination_floor == 0)
+        {
+            destination_floor = -1; // 1 -> B1
+        }
+        char dest_floor_str[4];
+        int_to_floor(destination_floor, dest_floor_str);
+        strcpy(shm_ptr->destination_floor, dest_floor_str);
+        pthread_cond_broadcast(&shm_ptr->cond);
+        printf("Signalled car %s to move down to floor %s.\n", car_name, dest_floor_str);
         pthread_mutex_unlock(&shm_ptr->mutex);
     }
 

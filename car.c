@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +88,15 @@ typedef struct
     int delay;
 } network_thread_args;
 
+typedef struct
+{
+    car_shared_mem *shm_ptr;
+    int delay;
+    volatile int *is_connected; // Shared flag
+    int sockfd;                 // So it can trigger disconnect
+} safety_monitor_args;
+
+// --- Network thread function ---
 void *network_thread_function(void *args)
 {
     network_thread_args *thread_args = (network_thread_args *)args;
@@ -96,10 +107,11 @@ void *network_thread_function(void *args)
     {
         // Wait if in service/emergency mode
         pthread_mutex_lock(&shm_ptr->mutex);
-        while (shm_ptr->individual_service_mode == 1 || shm_ptr->emergency_mode == 1)
+        while (shm_ptr->individual_service_mode == 1 ||
+               shm_ptr->emergency_mode == 1 ||
+               shm_ptr->safety_system == 0)
         {
             struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_nsec += (delay_ms * 1000000L);
             ts.tv_sec += ts.tv_nsec / 1000000000L;
             ts.tv_nsec = ts.tv_nsec % 1000000000L;
@@ -149,6 +161,26 @@ void *network_thread_function(void *args)
         send(sockfd, message_buffer, len, 0);
         printf("Registered with controller: [%s]\n", message_buffer);
 
+        // Signal that we're now monitoring the safety watchdog
+        pthread_mutex_lock(&shm_ptr->mutex);
+        shm_ptr->safety_system = 2; // Set to 2 to indicate network thread is monitoring
+        pthread_cond_broadcast(&shm_ptr->cond);
+        pthread_mutex_unlock(&shm_ptr->mutex);
+
+        // Send initial STATUS with fresh state
+        pthread_mutex_lock(&shm_ptr->mutex);
+        char status_message[BUFFER_SIZE];
+        sprintf(status_message, "STATUS %s %s %s",
+                shm_ptr->status,
+                shm_ptr->current_floor,
+                shm_ptr->destination_floor);
+        pthread_mutex_unlock(&shm_ptr->mutex);
+
+        len = strlen(status_message);
+        net_len = htons(len);
+        send(sockfd, &net_len, sizeof(net_len), 0);
+        send(sockfd, status_message, len, 0);
+
         // Set socket to non-blocking
         int flags = fcntl(sockfd, F_GETFL, 0);
         fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
@@ -159,6 +191,7 @@ void *network_thread_function(void *args)
         {
             // Check for service modes
             pthread_mutex_lock(&shm_ptr->mutex);
+
             if (shm_ptr->individual_service_mode == 1)
             {
                 pthread_mutex_unlock(&shm_ptr->mutex);
@@ -172,6 +205,7 @@ void *network_thread_function(void *args)
                 should_disconnect = 1;
                 break;
             }
+
             if (shm_ptr->emergency_mode == 1)
             {
                 pthread_mutex_unlock(&shm_ptr->mutex);
@@ -225,10 +259,16 @@ void *network_thread_function(void *args)
                 {
                     char *floor = recv_buffer + 6;
                     pthread_mutex_lock(&shm_ptr->mutex);
+
+                    // Already at requested floor
+                    if (strcmp(shm_ptr->current_floor, floor) == 0)
+                    {
+                        shm_ptr->open_button = 1;
+                    }
+
                     strcpy(shm_ptr->destination_floor, floor);
                     pthread_cond_broadcast(&shm_ptr->cond);
                     pthread_mutex_unlock(&shm_ptr->mutex);
-                    printf("Set destination floor to: %s\n", floor);
                 }
             }
 
@@ -238,27 +278,6 @@ void *network_thread_function(void *args)
             // Safety check and send status
             pthread_mutex_lock(&shm_ptr->mutex);
 
-            // Increment safety counter if safety system is active
-            if (shm_ptr->safety_system == 1)
-            {
-                shm_ptr->safety_system++;
-                if (shm_ptr->safety_system >= 3)
-                {
-                    printf("Safety system disconnected! Entering emergency mode.\n");
-                    shm_ptr->emergency_mode = 1;
-                    pthread_cond_broadcast(&shm_ptr->cond);
-
-                    char msg[] = "EMERGENCY";
-                    len = strlen(msg);
-                    net_len = htons(len);
-                    send(sockfd, &net_len, sizeof(net_len), 0);
-                    send(sockfd, msg, len, 0);
-                    pthread_mutex_unlock(&shm_ptr->mutex);
-                    close(sockfd);
-                    break;
-                }
-            }
-
             // Check again before sending status (race condition protection)
             if (shm_ptr->individual_service_mode == 1 || shm_ptr->emergency_mode == 1)
             {
@@ -266,13 +285,10 @@ void *network_thread_function(void *args)
                 continue;
             }
 
-            // Send status update
-            char status_message[BUFFER_SIZE];
             sprintf(status_message, "STATUS %s %s %s",
                     shm_ptr->status,
                     shm_ptr->current_floor,
                     shm_ptr->destination_floor);
-
             pthread_mutex_unlock(&shm_ptr->mutex);
 
             len = strlen(status_message);
@@ -289,6 +305,37 @@ void *network_thread_function(void *args)
     }
 
     return NULL;
+}
+
+// --- Safety Monitor Thread Function ---
+void *safety_monitor_thread(void *args)
+{
+    network_thread_args *thread_args = (network_thread_args *)args;
+    car_shared_mem *shm_ptr = thread_args->shm_ptr;
+    int delay_ms = thread_args->delay;
+
+    while (1)
+    {
+        usleep(delay_ms * 1000);
+
+        pthread_mutex_lock(&shm_ptr->mutex);
+
+        if (shm_ptr->individual_service_mode == 0 &&
+            shm_ptr->emergency_mode == 0 &&
+            shm_ptr->safety_system >= 2) // Only monitor when network thread is connected
+        {
+            shm_ptr->safety_system++;
+
+            if (shm_ptr->safety_system >= 3)
+            {
+                printf("Safety system disconnected! Entering emergency mode.\n");
+                shm_ptr->emergency_mode = 1;
+                pthread_cond_broadcast(&shm_ptr->cond);
+            }
+        }
+
+        pthread_mutex_unlock(&shm_ptr->mutex);
+    }
 }
 
 // --- Main Function ---
@@ -365,8 +412,13 @@ int main(int argc, char *argv[])
     args->highest_floor_str = argv[3];
     args->delay = delay;
 
-    pthread_t network_thread_id;
+    pthread_t network_thread_id, safety_thread_id;
     if (pthread_create(&network_thread_id, NULL, network_thread_function, args) != 0)
+    {
+        perror("pthread_create");
+        return 1;
+    }
+    if (pthread_create(&safety_thread_id, NULL, safety_monitor_thread, args) != 0)
     {
         perror("pthread_create");
         return 1;
@@ -378,25 +430,24 @@ int main(int argc, char *argv[])
     {
         pthread_mutex_lock(&shm_ptr->mutex);
 
-        // Don't do anything in emergency mode
+        // Wait if in emergency mode
         if (shm_ptr->emergency_mode == 1)
         {
-            shm_ptr->open_button = 1; // Open doors in emergency
             pthread_cond_wait(&shm_ptr->cond, &shm_ptr->mutex);
             pthread_mutex_unlock(&shm_ptr->mutex);
             continue;
         }
 
-        // Check if we need to move (don't wait if we're ready to move)
+        // Check if we need to move
         if (strcmp(shm_ptr->status, "Closed") == 0 &&
             strcmp(shm_ptr->current_floor, shm_ptr->destination_floor) != 0)
         {
-            // Ready to move, don't wait
-            pthread_mutex_unlock(&shm_ptr->mutex);
+            // Ready to move - handle movement immediately (don't wait)
+            // Fall through to movement handler below
         }
         else
         {
-            // Only wait if we're not ready to move
+            // Not ready to move - wait for changes
             pthread_cond_wait(&shm_ptr->cond, &shm_ptr->mutex);
         }
 
@@ -421,9 +472,10 @@ int main(int argc, char *argv[])
             }
 
             struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
             long nsec = ts.tv_nsec + (delay * 1000000L);
-            ts.tv_sec += nsec / 1000000000L;
-            ts.tv_nsec = nsec % 1000000000L;
+            ts.tv_sec += nsec / 1000000000L; // ADD THIS
+            ts.tv_nsec = nsec % 1000000000L; // ADD THIS
 
             pthread_cond_timedwait(&shm_ptr->cond, &shm_ptr->mutex, &ts);
 
@@ -506,44 +558,47 @@ int main(int argc, char *argv[])
 
             if (strcmp(shm_ptr->current_floor, shm_ptr->destination_floor) == 0)
             {
-                strcpy(shm_ptr->status, "Opening");
-                pthread_cond_broadcast(&shm_ptr->cond);
-                pthread_mutex_unlock(&shm_ptr->mutex);
-                usleep(delay * 1000);
-
-                pthread_mutex_lock(&shm_ptr->mutex);
-                strcpy(shm_ptr->status, "Open");
-                pthread_cond_broadcast(&shm_ptr->cond);
-
-                if (shm_ptr->individual_service_mode == 1)
+                if (shm_ptr->individual_service_mode == 0)
                 {
+                    // Auto-open doors (normal mode)
+                    strcpy(shm_ptr->status, "Opening");
+                    pthread_cond_broadcast(&shm_ptr->cond);
                     pthread_mutex_unlock(&shm_ptr->mutex);
-                    continue;
+                    usleep(delay * 1000);
+
+                    pthread_mutex_lock(&shm_ptr->mutex);
+                    strcpy(shm_ptr->status, "Open");
+                    pthread_cond_broadcast(&shm_ptr->cond);
+
+                    struct timespec ts;
+                    clock_gettime(CLOCK_REALTIME, &ts);
+                    long nsec = ts.tv_nsec + (delay * 1000000L);
+                    ts.tv_sec += nsec / 1000000000L;
+                    ts.tv_nsec = nsec % 1000000000L;
+
+                    pthread_cond_timedwait(&shm_ptr->cond, &shm_ptr->mutex, &ts);
+
+                    if (shm_ptr->close_button == 1)
+                    {
+                        shm_ptr->close_button = 0;
+                    }
+
+                    strcpy(shm_ptr->status, "Closing");
+                    pthread_cond_broadcast(&shm_ptr->cond);
+                    pthread_mutex_unlock(&shm_ptr->mutex);
+                    usleep(delay * 1000);
+
+                    pthread_mutex_lock(&shm_ptr->mutex);
+                    strcpy(shm_ptr->status, "Closed");
+                    pthread_cond_broadcast(&shm_ptr->cond);
+                    pthread_mutex_unlock(&shm_ptr->mutex);
                 }
-
-                struct timespec ts;
-                clock_gettime(CLOCK_REALTIME, &ts);
-                long nsec = ts.tv_nsec + (delay * 1000000L);
-                ts.tv_sec += nsec / 1000000000L;
-                ts.tv_nsec = nsec % 1000000000L;
-
-                pthread_cond_timedwait(&shm_ptr->cond, &shm_ptr->mutex, &ts);
-
-                if (shm_ptr->close_button == 1)
+                else
                 {
-                    shm_ptr->close_button = 0;
+                    // Service mode: don't auto-open, just stay closed
+                    pthread_mutex_unlock(&shm_ptr->mutex);
                 }
-
-                strcpy(shm_ptr->status, "Closing");
-                pthread_cond_broadcast(&shm_ptr->cond);
-                pthread_mutex_unlock(&shm_ptr->mutex);
-                usleep(delay * 1000);
-
-                pthread_mutex_lock(&shm_ptr->mutex);
-                strcpy(shm_ptr->status, "Closed");
-                pthread_cond_broadcast(&shm_ptr->cond);
-                pthread_mutex_unlock(&shm_ptr->mutex);
-            }
+            } // Close the movement handler
             else
             {
                 pthread_mutex_unlock(&shm_ptr->mutex);
@@ -551,9 +606,9 @@ int main(int argc, char *argv[])
         }
         else
         {
+            // Nothing to do - unlock and loop back
             pthread_mutex_unlock(&shm_ptr->mutex);
         }
     }
-
     return 0; // Will not be reached
 }

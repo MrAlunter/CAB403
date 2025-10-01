@@ -22,16 +22,13 @@ void sendMessage(int sockfd, const char *msg)
 
 bool is_floor_valid(const char *floor_str)
 {
-    // Check if the string is empty or too long
     if (strlen(floor_str) == 0 || strlen(floor_str) > 3)
     {
         return false;
     }
-
-    // --- First if statement: Handle Basement Floors ---
+    // Handle Basement Floors
     if (floor_str[0] == 'B')
     {
-        // Check if the rest of the string is a number
         for (int i = 1; i < strlen(floor_str); i++)
         {
             if (!isdigit(floor_str[i]))
@@ -41,10 +38,9 @@ bool is_floor_valid(const char *floor_str)
         return (floor_num >= 1 && floor_num <= 99);
     }
 
-    // --- Second if statement: Handle Regular Floors ---
+    // Handle Regular Floors
     else if (isdigit(floor_str[0]))
     {
-        // Check if all characters are numbers
         for (int i = 0; i < strlen(floor_str); i++)
         {
             if (!isdigit(floor_str[i]))
@@ -137,7 +133,7 @@ int main(int argc, char *argv[])
     // 7. Process the reply
     if (strcmp(reply_buffer, "UNAVAILABLE") != 0)
     {
-        printf("Car %s is arriving.\n", reply_buffer);
+        printf("%s is arriving.\n", reply_buffer);
     }
     else
     {
