@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
     shm_ptr->emergency_mode = 0;
     printf("Shared memory for car '%s' created and initialized.\n", car_name);
 
-    // Start the network thread
+    // Start the network thread.
     network_thread_args *args = malloc(sizeof(network_thread_args));
     args->shm_ptr = shm_ptr;
     args->car_name = car_name;
