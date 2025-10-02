@@ -32,6 +32,8 @@ typedef struct
 
     Node *up_queue;
     Node *down_queue;
+
+    char pending_destination[4];
 } Car;
 
 Car connected_cars[10];
@@ -152,6 +154,7 @@ void handleCallRequest(const char *source_floor, const char *destination_floor, 
                 dest >= connected_cars[i].lowest_floor &&
                 dest <= connected_cars[i].highest_floor)
             {
+                // Send FLOOR message to the car
                 char floor_msg[BUFFER_SIZE];
                 sprintf(floor_msg, "FLOOR %s", source_floor);
                 uint16_t len = strlen(floor_msg);
@@ -159,10 +162,13 @@ void handleCallRequest(const char *source_floor, const char *destination_floor, 
                 send(connected_cars[i].sockfd, &net_len, sizeof(net_len), 0);
                 send(connected_cars[i].sockfd, floor_msg, len, 0);
 
+                strcpy(connected_cars[i].pending_destination, destination_floor);
+
                 printf("Assigned call to car: %s, sent FLOOR %s\n", connected_cars[i].name, source_floor);
 
+                // Send acknowledgment to call pad
                 char ack[BUFFER_SIZE];
-                sprintf(ack, "%s", connected_cars[i].name);
+                sprintf(ack, "CAR %s", connected_cars[i].name);
                 len = strlen(ack);
                 net_len = htons(len);
                 send(client_fd, &net_len, sizeof(net_len), 0);
@@ -200,9 +206,11 @@ void *handleConnection(void *arg)
         handleCarRegistration(car_name, lowest, highest, sockfd);
         printf("Car %s connected on socket %d\n", car_name, sockfd);
 
+        // --- FIX STARTS HERE: Add a loop to handle persistent car connections ---
         while (1)
         {
             receiveMessage(sockfd, buffer, sizeof(buffer));
+            // Check if the car disconnected
             if (buffer[0] == '\0')
             {
                 printf("Car %s disconnected\n", car_name);
@@ -211,14 +219,15 @@ void *handleConnection(void *arg)
                 {
                     if (connected_cars[i].sockfd == sockfd)
                     {
-                        connected_cars[i].is_active = 0;
+                        connected_cars[i].is_active = 0; // Mark car as inactive
                         break;
                     }
                 }
                 pthread_mutex_unlock(&cars_mutex);
-                break;
+                break; // Exit the loop
             }
 
+            // Existing status handling logic goes inside the loop
             if (strncmp(buffer, "STATUS", 6) == 0)
             {
                 char status[8], current[4], dest[4];
@@ -232,6 +241,24 @@ void *handleConnection(void *arg)
                         strcpy(connected_cars[i].status, status);
                         strcpy(connected_cars[i].current_floor, current);
                         strcpy(connected_cars[i].destination_floor, dest);
+
+                        // Simple queue simulation using destination tracking
+                        // When car reaches its destination and starts opening
+                        if (strcmp(status, "Opening") == 0 && strcmp(current, dest) == 0)
+                        {
+                            // Check if we have a pending destination
+                            if (strlen(connected_cars[i].pending_destination) > 0)
+                            {
+                                char floor_msg[BUFFER_SIZE];
+                                sprintf(floor_msg, "FLOOR %s", connected_cars[i].pending_destination);
+                                uint16_t len = strlen(floor_msg);
+                                uint16_t net_len = htons(len);
+                                send(sockfd, &net_len, sizeof(net_len), 0);
+                                send(sockfd, floor_msg, len, 0);
+                                printf("Sent pending FLOOR %s to car %s\n", connected_cars[i].pending_destination, connected_cars[i].name);
+                                connected_cars[i].pending_destination[0] = '\0';
+                            }
+                        }
                         break;
                     }
                 }
