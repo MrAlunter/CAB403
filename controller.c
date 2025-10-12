@@ -13,7 +13,7 @@
 
 typedef struct Node
 {
-    char floor[4];
+    int floor;
     struct Node *next;
 } Node;
 
@@ -59,22 +59,181 @@ int floor_to_int(const char *floor_str)
 void add_to_queue(Node **head, const char *floor)
 {
     Node *new_node = malloc(sizeof(Node));
-    strcpy(new_node->floor, floor);
+    new_node->floor = floor;
     new_node->next = NULL;
 
-    if (*head == NULL)
+    if (*queue == NULL)
     {
-        *head = new_node;
+        *queue = new_node;
+        return;
+    }
+
+    // Insert in ascending order until we hit the peak
+    Node *curr = *queue;
+    Node *prev = NULL;
+
+    while (curr != NULL && curr->floor < peak_floor)
+    {
+        if (floor < curr->floor)
+        {
+            // Insert here
+            new_node->next = curr;
+            if (prev == NULL)
+            {
+                *queue = new_node;
+            }
+            else
+            {
+                prev->next = new_node;
+            }
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    // Insert before peak
+    new_node->next = curr;
+    if (prev == NULL)
+    {
+        *queue = new_node;
     }
     else
     {
-        Node *temp = *head;
-        while (temp->next != NULL)
-        {
-            temp = temp->next;
-        }
-        temp->next = new_node;
+        prev->next = new_node;
     }
+}
+
+void print_queue(const char *car_name, Node *queue, int peak_floor)
+{
+    // printf("DEBUG: Car %s queue [peak=%d]: ", car_name, peak_floor);
+    if (queue == NULL)
+    {
+        printf("(empty)\n");
+        return;
+    }
+
+    Node *curr = queue;
+    printf("[");
+    while (curr != NULL)
+    {
+        printf("%d", curr->floor);
+        if (curr->next != NULL)
+        {
+            printf(", ");
+        }
+        curr = curr->next;
+    }
+    printf("]\n");
+}
+
+// Insert pickup floor above current peak (becomes new peak)
+void insert_above_peak(Node **queue, int *peak_floor, int floor)
+{
+    Node *new_node = malloc(sizeof(Node));
+    new_node->floor = floor;
+    new_node->next = NULL;
+
+    if (*queue == NULL)
+    {
+        *queue = new_node;
+        *peak_floor = floor;
+        return;
+    }
+
+    // Find the END of the ascending section (right before it starts descending)
+    Node *curr = *queue;
+    Node *prev = NULL;
+
+    while (curr->next != NULL && curr->next->floor > curr->floor)
+    {
+        // Still ascending
+        prev = curr;
+        curr = curr->next;
+    }
+
+    // Now curr is the last ascending node (the current peak)
+    // Insert new peak after it
+    new_node->next = curr->next;
+    curr->next = new_node;
+
+    *peak_floor = floor; // Update peak to new value
+}
+
+// Insert dropoff in descending section (after peak)
+void append_to_descent(Node **queue, int peak_floor, int floor)
+{
+    Node *new_node = malloc(sizeof(Node));
+    new_node->floor = floor;
+    new_node->next = NULL;
+
+    if (*queue == NULL)
+    {
+        *queue = new_node;
+        return;
+    }
+
+    // Find the peak, then insert in descending order after it
+    Node *curr = *queue;
+
+    // printf("DEBUG append_to_descent: inserting %d (peak=%d), queue before: ", floor, peak_floor);
+    Node *temp = *queue;
+    while (temp)
+    {
+        printf("%d ", temp->floor);
+        temp = temp->next;
+    }
+    printf("\n");
+
+    // Skip to the peak node itself
+    while (curr != NULL && curr->floor != peak_floor)
+    {
+        // printf("DEBUG: Moving to next, current=%d\n", curr->floor);
+        if (curr->next == NULL)
+            break;
+        curr = curr->next;
+    }
+
+    if (curr == NULL || curr->floor != peak_floor)
+    {
+        // Couldn't find peak, just append at end
+        // printf("DEBUG: Couldn't find peak, appending at end\n");
+        curr = *queue;
+        while (curr->next != NULL)
+        {
+            curr = curr->next;
+        }
+        curr->next = new_node;
+        return;
+    }
+
+    // printf("DEBUG: Found peak at node %d\n", curr->floor);
+
+    // Now insert in descending order after the peak
+    while (curr->next != NULL && curr->next->floor > floor)
+    {
+        // printf("DEBUG: Skipping past %d (> %d in descent)\n", curr->next->floor, floor);
+        curr = curr->next;
+    }
+
+    // printf("DEBUG: Inserting %d after %d\n", floor, curr->floor);
+
+    new_node->next = curr->next;
+    curr->next = new_node;
+}
+
+int is_floor_in_queue(Node *queue, int floor)
+{
+    Node *current = queue;
+    while (current != NULL)
+    {
+        if (current->floor == floor)
+        {
+            return 1; // Already in queue
+        }
+        current = current->next;
+    }
+    return 0; // Not in queue
 }
 
 void receiveMessage(int sockfd, char *buffer, int buffer_size)
@@ -112,6 +271,7 @@ void handleCarRegistration(const char *car_name, const char *lowest_floor, const
         }
     }
 
+    // Register new car
     for (int i = 0; i < 10; i++)
     {
         if (!connected_cars[i].is_active)
