@@ -41,13 +41,13 @@ bool is_valid_floor(const char *floor)
     if (floor[0] == 'B')
     {
         // Basement: B1-B99
-        int level = atoi(floor + 1);
+        int level = stoi(floor + 1);
         return (level >= 1 && level <= 99);
     }
     else if (isdigit(floor[0]))
     {
         // Regular: 1-999
-        int level = atoi(floor);
+        int level = stoi(floor);
         return (level >= 1 && level <= 999);
     }
     return false;

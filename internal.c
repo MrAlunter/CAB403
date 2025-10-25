@@ -11,11 +11,11 @@ int floor_to_int(const char *floor_str)
 {
     if (floor_str[0] == 'B')
     {
-        return -atoi(&floor_str[1]);
+        return -stoi(&floor_str[1]);
     }
     else
     {
-        return atoi(floor_str);
+        return stoi(floor_str);
     }
 }
 

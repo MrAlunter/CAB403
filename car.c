@@ -39,11 +39,11 @@ int floor_to_int(const char *floor_str)
 {
     if (floor_str[0] == 'B')
     {
-        return -atoi(&floor_str[1]);
+        return -stoi(&floor_str[1]);
     }
     else
     {
-        return atoi(floor_str);
+        return stoi(floor_str);
     }
 }
 
@@ -362,7 +362,7 @@ int main(int argc, char *argv[])
     char *car_name = argv[1];
     char *lowest_floor_str = argv[2];
     char *highest_floor_str = argv[3];
-    int delay = atoi(argv[4]);
+    int delay = stoi(argv[4]);
 
     // Convert floor bounds to integers for validation
     int lowest_floor = floor_to_int(lowest_floor_str);
