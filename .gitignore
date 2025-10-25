@@ -1,2 +1,22 @@
 .vscode/
 .vscode/
+# Compiled binaries
+call
+car
+controller
+internal
+safety
+cat >> .gitignore << 'EOF'
+# Compiled binaries
+call
+car
+controller
+internal
+safety
+
+# Test binaries
+CAB_testing/display-cars
+CAB_testing/test-*
+
+# IDE settings
+.vscode/
