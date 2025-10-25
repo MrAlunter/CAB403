@@ -11,29 +11,31 @@
 #define BACKLOG 10
 #define BUFFER_SIZE 1024
 
+// Node: Represents a floor in the elevator's queue
 typedef struct Node
 {
-    int floor;
-    struct Node *next;
+    int floor;         // Floor number (negative for basement)
+    struct Node *next; // Next floor in queue
 } Node;
 
+// Car: Represents a single elevator car and its state
 typedef struct
 {
-    char name[50];
-    int is_active;
-    int sockfd;
+    char name[50]; // Car identifier (e.g. "1", "2")
+    int is_active; // Whether car is connected
+    int sockfd;    // Socket connection to car
 
-    int lowest_floor;
-    int highest_floor;
+    int lowest_floor;  // Lowest floor car can service
+    int highest_floor; // Highest floor car can service
 
-    char current_floor[4];
-    char destination_floor[4];
-    char status[8];
+    char current_floor[4];     // Current floor ("1" or "B1")
+    char destination_floor[4]; // Target floor
+    char status[8];            // Car status (Opening/Open/Closing/Closed/Between)
 
-    Node *up_queue;
-    Node *down_queue;
+    Node *up_queue;   // Queue for upward travel
+    Node *down_queue; // Queue for downward travel
 
-    char pending_destination[4];
+    char pending_destination[4]; // Next destination after current
 } Car;
 
 Car connected_cars[10];
@@ -349,28 +351,13 @@ void handleCallRequest(const char *source_floor, const char *destination_floor, 
         // Calculate basic distance
         int distance = abs(car_pos - source);
 
-        // If car is moving, check if request is in same direction
+        // Add penalty if car is moving in wrong direction
         if (car_moving)
         {
-            if (going_up && !car_going_up)
+            if ((going_up && !car_going_up) || (!going_up && car_going_up))
             {
-                // Car going down, we want up - make distance worse
+                // Wrong direction - make this car less desirable
                 distance += 1000;
-            }
-            else if (!going_up && car_going_up)
-            {
-                // Car going up, we want down - make distance worse
-                distance += 1000;
-            }
-
-            // If car has already passed our floor in its direction, make distance worse
-            if (car_going_up && car_pos > source)
-            {
-                distance += 500;
-            }
-            else if (!car_going_up && car_pos < source)
-            {
-                distance += 500;
             }
         }
 

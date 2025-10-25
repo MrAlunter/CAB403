@@ -1,3 +1,8 @@
+// Call program - requests elevator service from a floor
+// Usage: ./call <source_floor> <destination_floor>
+// Example: ./call 1 5     - Call elevator from floor 1 to floor 5
+//         ./call B2 1    - Call elevator from basement 2 to floor 1
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

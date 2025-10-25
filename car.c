@@ -76,22 +76,24 @@ int get_next_floor(int current, int destination)
     }
 }
 
-// --- Struct for thread arguments ---
+// Thread argument structs
+// network_thread_args: data needed for network communication thread
 typedef struct
 {
-    car_shared_mem *shm_ptr;
-    char *car_name;
-    char *lowest_floor_str;
-    char *highest_floor_str;
-    int delay;
+    car_shared_mem *shm_ptr; // Pointer to shared memory
+    char *car_name;          // Name of this car (e.g. "1", "2")
+    char *lowest_floor_str;  // Lowest floor car can reach
+    char *highest_floor_str; // Highest floor car can reach
+    int delay;               // Delay between status updates (ms)
 } network_thread_args;
 
+// safety_monitor_args: data needed for safety monitoring thread
 typedef struct
 {
-    car_shared_mem *shm_ptr;
-    int delay;
-    volatile int *is_connected; // Shared flag
-    int sockfd;                 // So it can trigger disconnect
+    car_shared_mem *shm_ptr;    // Pointer to shared memory
+    int delay;                  // Check interval (ms)
+    volatile int *is_connected; // Connection status flag
+    int sockfd;                 // Socket to close on disconnect
 } safety_monitor_args;
 
 // network_thread_function: maintains controller connection and forwards STATUS/FLOOR messages
@@ -269,19 +271,12 @@ void *network_thread_function(void *args)
                 char recv_buffer[BUFFER_SIZE];
                 ssize_t total_received = 0;
 
-                // Loop to ensure the full message is received
-                while (total_received < msg_len)
+                // Receive the message in one go
+                ssize_t n = recv(sockfd, recv_buffer, msg_len, 0);
+                if (n != msg_len)
                 {
-                    ssize_t n = recv(sockfd, recv_buffer + total_received, msg_len - total_received, 0);
-                    if (n > 0)
-                    {
-                        total_received += n;
-                    }
-                    else if (n == 0 || (n < 0 && errno != EWOULDBLOCK && errno != EAGAIN))
-                    {
-                        should_disconnect = 1;
-                        break;
-                    }
+                    should_disconnect = 1;
+                    continue;
                 }
 
                 if (should_disconnect)
@@ -430,7 +425,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Start the main local control loop
+    // Start the main elevator control state machine
+    // This loop handles:
+    // - Door control (open/close)
+    // - Floor-to-floor movement
+    // - Emergency mode handling
+    // - Service mode behavior
     printf("Car '%s' is now running. Press Ctrl+C to exit.\n", car_name);
     while (1)
     {

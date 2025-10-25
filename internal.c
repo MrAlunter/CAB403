@@ -5,8 +5,14 @@
 #include <unistd.h>   // For close
 #include "shared.h"
 
-// Helper function to convert floor string to integer------------------------------
+// Internal control program for elevator car operation
+// Provides commands like:
+// - open/close doors
+// - emergency stop
+// - service mode controls
+// - manual up/down movement
 
+// Helper Functions
 // floor_to_int: convert floor string to integer (B1 -> -1)
 int floor_to_int(const char *floor_str)
 {

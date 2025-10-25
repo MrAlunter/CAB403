@@ -90,25 +90,24 @@ static bool is_valid_floor(const char *const floor)
     return false;
 }
 
-/* Valid elevator status strings */
+//  Valid elevator status strings
 static const char *const VALID_STATUSES[] = {
     "Opening",
     "Open",
     "Closing",
     "Closed",
     "Between",
-    NULL /* Sentinel */
-};
+    NULL};
 
 static bool is_valid_status(const char *const status)
 {
-    /* MISRA C: Rule 17.7 - Check pointer validity */
+    // MISRA C: Rule 17.7 - Check pointer validity
     if (status == NULL)
     {
         return false;
     }
 
-    /* MISRA C: Rule 14.4 - No assignment in conditional */
+    //  MISRA C: Rule 14.4 - No assignment in conditional
     for (const char *const *curr = VALID_STATUSES; *curr != NULL; ++curr)
     {
         if (0 == strcmp(status, *curr))
@@ -123,7 +122,7 @@ static bool is_valid_status(const char *const status)
 
 static int validate_args(const int argc, char *const argv[], const char **car_name)
 {
-    /* MISRA C: Rule 17.7 - Check pointer validity */
+    // MISRA C: Rule 17.7 - Check pointer validity
     if ((argv == NULL) || (car_name == NULL))
     {
         return SAFETY_ERROR_ARGS;
@@ -135,7 +134,7 @@ static int validate_args(const int argc, char *const argv[], const char **car_na
         return SAFETY_ERROR_ARGS;
     }
 
-    /* MISRA C: Rule 17.7 - Check pointer validity */
+    // MISRA C: Rule 17.7 - Check pointer validity
     if (argv[1] == NULL)
     {
         fprintf(stderr, "Car name cannot be NULL\n");
@@ -162,7 +161,7 @@ int main(int argc, char *argv[])
         return result;
     }
 
-    /* Construct shared memory name */
+    // Construct shared memory name
     char shm_name[MAX_CAR_NAME + sizeof(SHM_NAME_PREFIX)];
     if (snprintf(shm_name, sizeof(shm_name), "%s%s", SHM_NAME_PREFIX, car_name) < 0)
     {
@@ -170,7 +169,7 @@ int main(int argc, char *argv[])
         return SAFETY_ERROR_SHM;
     }
 
-    /* Open shared memory */
+    // Open shared memory
     const int fd = shm_open(shm_name, O_RDWR, 0666);
     if (fd == -1)
     {
@@ -178,7 +177,7 @@ int main(int argc, char *argv[])
         return SAFETY_ERROR_SHM;
     }
 
-    /* Map shared memory */
+    // Map shared memory
     car_shared_mem *const shm_ptr = mmap(NULL, sizeof(car_shared_mem),
                                          PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (shm_ptr == MAP_FAILED)
