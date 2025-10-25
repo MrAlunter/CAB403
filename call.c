@@ -12,6 +12,7 @@
 #define CONTROLLER_PORT 3000
 #define CONTROLLER_IP "127.0.0.1"
 
+// sendMessage: send a 16-bit length prefix followed by the message bytes
 void sendMessage(int sockfd, const char *msg)
 {
     uint16_t len = strlen(msg);
@@ -20,6 +21,7 @@ void sendMessage(int sockfd, const char *msg)
     send(sockfd, msg, len, 0);
 }
 
+// is_floor_valid: validate floor strings (B1..B99, 1..999)
 bool is_floor_valid(const char *floor_str)
 {
     if (strlen(floor_str) == 0 || strlen(floor_str) > 3)
@@ -34,7 +36,7 @@ bool is_floor_valid(const char *floor_str)
             if (!isdigit(floor_str[i]))
                 return false;
         }
-        int floor_num = stoi(floor_str + 1);
+        int floor_num = atoi(floor_str + 1);
         return (floor_num >= 1 && floor_num <= 99);
     }
 
@@ -46,7 +48,7 @@ bool is_floor_valid(const char *floor_str)
             if (!isdigit(floor_str[i]))
                 return false;
         }
-        int floor_num = stoi(floor_str);
+        int floor_num = atoi(floor_str);
         return (floor_num >= 1 && floor_num <= 999);
     }
 
@@ -54,6 +56,7 @@ bool is_floor_valid(const char *floor_str)
     return false;
 }
 
+// receiveMessage: read a length-prefixed message into buffer
 void receiveMessage(int sockfd, char *buffer, int buffer_size)
 {
     uint16_t len;
@@ -72,6 +75,7 @@ void receiveMessage(int sockfd, char *buffer, int buffer_size)
 
 // ---------------------Main Function---------------------
 
+// main: parse arguments, send a CALL request and print controller reply
 int main(int argc, char *argv[])
 {
     // 1. Check arguments

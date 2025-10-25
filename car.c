@@ -19,10 +19,10 @@
 #define CONTROLLER_IP "127.0.0.1"
 #define BUFFER_SIZE 1024
 
-// --- Global variable for signal handler ---
+// Global variable for signal handler
 char *g_shm_name = NULL;
 
-// --- Signal handler function ---
+// handle_sigint: cleanup shared memory on Ctrl+C (registered with signal())
 void handle_sigint(int sig)
 {
     printf("\nCtrl+C detected. Cleaning up shared memory...\n");
@@ -33,22 +33,20 @@ void handle_sigint(int sig)
     exit(0);
 }
 
-// Helper function to convert floor string to integer
-// B1 = -1, B2 = -2, 1 = 1, 2 = 2, etc.
+// floor_to_int: convert floor string ("B1"/"1") to integer representation
 int floor_to_int(const char *floor_str)
 {
     if (floor_str[0] == 'B')
     {
-        return -stoi(&floor_str[1]);
+        return -atoi(&floor_str[1]);
     }
     else
     {
-        return stoi(floor_str);
+        return atoi(floor_str);
     }
 }
 
-// Helper function to convert integer back to floor string
-// -1 = "B1", -2 = "B2", 1 = "1", 2 = "2", etc.
+// int_to_floor: convert integer floor to textual representation
 void int_to_floor(int floor_num, char *floor_str)
 {
     if (floor_num < 0)
@@ -61,8 +59,7 @@ void int_to_floor(int floor_num, char *floor_str)
     }
 }
 
-// Get the next floor moving toward destination
-// Returns the next floor number, or current if already at destination
+// get_next_floor: step one floor towards destination
 int get_next_floor(int current, int destination)
 {
     if (current < destination)
@@ -97,7 +94,7 @@ typedef struct
     int sockfd;                 // So it can trigger disconnect
 } safety_monitor_args;
 
-// --- Network thread function ---
+// network_thread_function: maintains controller connection and forwards STATUS/FLOOR messages
 void *network_thread_function(void *args)
 {
     network_thread_args *thread_args = (network_thread_args *)args;
@@ -316,7 +313,7 @@ void *network_thread_function(void *args)
     return NULL;
 }
 
-// --- Safety Monitor Thread Function ---
+// safety_monitor_thread: watchdog that increments safety counter and enforces emergency mode
 void *safety_monitor_thread(void *args)
 {
     network_thread_args *thread_args = (network_thread_args *)args;
@@ -347,7 +344,7 @@ void *safety_monitor_thread(void *args)
     }
 }
 
-// --- Main Function ---
+// main: create shared memory, start threads and run local car state machine
 int main(int argc, char *argv[])
 {
     // 1. Register signal handler
@@ -362,7 +359,7 @@ int main(int argc, char *argv[])
     char *car_name = argv[1];
     char *lowest_floor_str = argv[2];
     char *highest_floor_str = argv[3];
-    int delay = stoi(argv[4]);
+    int delay = atoi(argv[4]);
 
     // Convert floor bounds to integers for validation
     int lowest_floor = floor_to_int(lowest_floor_str);

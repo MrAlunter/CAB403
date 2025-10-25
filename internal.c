@@ -7,18 +7,20 @@
 
 // Helper function to convert floor string to integer------------------------------
 
+// floor_to_int: convert floor string to integer (B1 -> -1)
 int floor_to_int(const char *floor_str)
 {
     if (floor_str[0] == 'B')
     {
-        return -stoi(&floor_str[1]);
+        return -atoi(&floor_str[1]);
     }
     else
     {
-        return stoi(floor_str);
+        return atoi(floor_str);
     }
 }
 
+// int_to_floor: write textual floor string for integer (e.g. -1 -> "B1")
 void int_to_floor(int floor_num, char *floor_str)
 {
     if (floor_num < 0)
@@ -33,6 +35,7 @@ void int_to_floor(int floor_num, char *floor_str)
 
 // End of helper functions ---------------------
 
+// main: CLI that manipulates shared memory to control a car (open/close/etc.)
 int main(int argc, char *argv[])
 {
     if (argc != 3)

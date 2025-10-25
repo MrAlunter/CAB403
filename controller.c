@@ -44,66 +44,69 @@ void receiveMessage(int sockfd, char *buffer, int buffer_size);
 void handleCarRegistration(const char *car_name, const char *lowest_floor, const char *highest_floor, int sockfd);
 void handleCallRequest(const char *source_floor, const char *destination_floor, int client_fd);
 
+// floor_to_int: convert floor string ("B1"/"1") to integer representation
 int floor_to_int(const char *floor_str)
 {
     if (floor_str[0] == 'B')
     {
-        return -stoi(&floor_str[1]);
+        return -atoi(&floor_str[1]);
     }
     else
     {
-        return stoi(floor_str);
+        return atoi(floor_str);
     }
 }
 
-void add_to_queue(Node **head, const char *floor)
+// add_to_queue: insert floor into sorted linked list (ascending if going_up)
+void add_to_queue(Node **queue, int floor, int going_up)
 {
     Node *new_node = malloc(sizeof(Node));
     new_node->floor = floor;
     new_node->next = NULL;
 
+    // Empty queue case
     if (*queue == NULL)
     {
         *queue = new_node;
         return;
     }
 
-    // Insert in ascending order until we hit the peak
     Node *curr = *queue;
     Node *prev = NULL;
 
-    while (curr != NULL && curr->floor < peak_floor)
+    // Going up - insert in ascending order
+    if (going_up)
     {
-        if (floor < curr->floor)
+        while (curr != NULL && curr->floor < floor)
         {
-            // Insert here
-            new_node->next = curr;
-            if (prev == NULL)
-            {
-                *queue = new_node;
-            }
-            else
-            {
-                prev->next = new_node;
-            }
-            return;
+            prev = curr;
+            curr = curr->next;
         }
-        prev = curr;
-        curr = curr->next;
+    }
+    // Going down - insert in descending order
+    else
+    {
+        while (curr != NULL && curr->floor > floor)
+        {
+            prev = curr;
+            curr = curr->next;
+        }
     }
 
-    // Insert before peak
-    new_node->next = curr;
+    // Insert the new node
     if (prev == NULL)
     {
+        new_node->next = *queue;
         *queue = new_node;
     }
     else
     {
+        new_node->next = curr;
         prev->next = new_node;
     }
 }
 
+// print_queue: debugging helper to print a queue's contents
 void print_queue(const char *car_name, Node *queue, int peak_floor)
 {
     // printf("DEBUG: Car %s queue [peak=%d]: ", car_name, peak_floor);
@@ -127,7 +130,7 @@ void print_queue(const char *car_name, Node *queue, int peak_floor)
     printf("]\n");
 }
 
-// Insert pickup floor above current peak (becomes new peak)
+// insert_above_peak: insert a pickup above the current peak node
 void insert_above_peak(Node **queue, int *peak_floor, int floor)
 {
     Node *new_node = malloc(sizeof(Node));
@@ -160,7 +163,7 @@ void insert_above_peak(Node **queue, int *peak_floor, int floor)
     *peak_floor = floor; // Update peak to new value
 }
 
-// Insert dropoff in descending section (after peak)
+// append_to_descent: append a dropoff into the descending section after peak
 void append_to_descent(Node **queue, int peak_floor, int floor)
 {
     Node *new_node = malloc(sizeof(Node));
@@ -222,6 +225,7 @@ void append_to_descent(Node **queue, int peak_floor, int floor)
     curr->next = new_node;
 }
 
+// is_floor_in_queue: check whether a floor already exists in the queue
 int is_floor_in_queue(Node *queue, int floor)
 {
     Node *current = queue;
@@ -236,6 +240,7 @@ int is_floor_in_queue(Node *queue, int floor)
     return 0; // Not in queue
 }
 
+// receiveMessage: read a 16-bit length-prefixed message into buffer
 void receiveMessage(int sockfd, char *buffer, int buffer_size)
 {
     uint16_t len;
@@ -257,6 +262,7 @@ void receiveMessage(int sockfd, char *buffer, int buffer_size)
     buffer[len] = '\0';
 }
 
+// handleCarRegistration: register or update a connected car in the array
 void handleCarRegistration(const char *car_name, const char *lowest_floor, const char *highest_floor, int sockfd)
 {
     pthread_mutex_lock(&cars_mutex);
@@ -296,48 +302,116 @@ void handleCarRegistration(const char *car_name, const char *lowest_floor, const
     pthread_mutex_unlock(&cars_mutex);
 }
 
+// handleCallRequest: choose a best car and forward the FLOOR assignment
 void handleCallRequest(const char *source_floor, const char *destination_floor, int client_fd)
 {
     printf("Handling call request from %s to %s\n", source_floor, destination_floor);
 
     int source = floor_to_int(source_floor);
     int dest = floor_to_int(destination_floor);
+    int going_up = (dest > source); // Direction of travel
 
     pthread_mutex_lock(&cars_mutex);
 
+    // Try to find a suitable car
+    int best_car = -1;
+    int best_distance = 99999; // Just a big number
+
     for (int i = 0; i < 10; i++)
     {
-        if (connected_cars[i].is_active)
+        if (!connected_cars[i].is_active)
+            continue;
+
+        // Check if car can serve these floors
+        if (source < connected_cars[i].lowest_floor ||
+            source > connected_cars[i].highest_floor ||
+            dest < connected_cars[i].lowest_floor ||
+            dest > connected_cars[i].highest_floor)
         {
-            if (source >= connected_cars[i].lowest_floor &&
-                source <= connected_cars[i].highest_floor &&
-                dest >= connected_cars[i].lowest_floor &&
-                dest <= connected_cars[i].highest_floor)
+            continue;
+        }
+
+        int car_pos = floor_to_int(connected_cars[i].current_floor);
+        int car_dest = floor_to_int(connected_cars[i].destination_floor);
+
+        // Don't use cars that are "Between" floors or have their doors open
+        if (strcmp(connected_cars[i].status, "Between") == 0 ||
+            strcmp(connected_cars[i].status, "Opening") == 0 ||
+            strcmp(connected_cars[i].status, "Open") == 0)
+        {
+            continue;
+        }
+
+        // Figure out if car is moving and in which direction
+        int car_going_up = (car_dest > car_pos);
+        int car_moving = (car_pos != car_dest);
+
+        // Calculate basic distance
+        int distance = abs(car_pos - source);
+
+        // If car is moving, check if request is in same direction
+        if (car_moving)
+        {
+            if (going_up && !car_going_up)
             {
-                // Send FLOOR message to the car
-                char floor_msg[BUFFER_SIZE];
-                sprintf(floor_msg, "FLOOR %s", source_floor);
-                uint16_t len = strlen(floor_msg);
-                uint16_t net_len = htons(len);
-                send(connected_cars[i].sockfd, &net_len, sizeof(net_len), 0);
-                send(connected_cars[i].sockfd, floor_msg, len, 0);
+                // Car going down, we want up - make distance worse
+                distance += 1000;
+            }
+            else if (!going_up && car_going_up)
+            {
+                // Car going up, we want down - make distance worse
+                distance += 1000;
+            }
 
-                strcpy(connected_cars[i].pending_destination, destination_floor);
-
-                printf("Assigned call to car: %s, sent FLOOR %s\n", connected_cars[i].name, source_floor);
-
-                // Send acknowledgment to call pad
-                char ack[BUFFER_SIZE];
-                sprintf(ack, "CAR %s", connected_cars[i].name);
-                len = strlen(ack);
-                net_len = htons(len);
-                send(client_fd, &net_len, sizeof(net_len), 0);
-                send(client_fd, ack, len, 0);
-
-                pthread_mutex_unlock(&cars_mutex);
-                return;
+            // If car has already passed our floor in its direction, make distance worse
+            if (car_going_up && car_pos > source)
+            {
+                distance += 500;
+            }
+            else if (!car_going_up && car_pos < source)
+            {
+                distance += 500;
             }
         }
+
+        // Pick the closest available car
+        if (distance < best_distance)
+        {
+            best_car = i;
+            best_distance = distance;
+        }
+    }
+
+    if (best_car >= 0)
+    {
+        // Add both source and destination to appropriate queues
+        add_to_queue(&connected_cars[best_car].up_queue, source, going_up);
+        add_to_queue(&connected_cars[best_car].up_queue, dest, going_up);
+
+        // Send first destination to car
+        char floor_msg[BUFFER_SIZE];
+        sprintf(floor_msg, "FLOOR %s", source_floor);
+        uint16_t len = strlen(floor_msg);
+        uint16_t net_len = htons(len);
+        send(connected_cars[best_car].sockfd, &net_len, sizeof(net_len), 0);
+        send(connected_cars[best_car].sockfd, floor_msg, len, 0);
+
+        // Store pending destination
+        strcpy(connected_cars[best_car].pending_destination, destination_floor);
+
+        printf("Assigned call to car: %s, sent FLOOR %s\n",
+               connected_cars[best_car].name, source_floor);
+
+        // Send acknowledgment to call pad
+        char ack[BUFFER_SIZE];
+        sprintf(ack, "CAR %s", connected_cars[best_car].name);
+        len = strlen(ack);
+        net_len = htons(len);
+        send(client_fd, &net_len, sizeof(net_len), 0);
+        send(client_fd, ack, len, 0);
+
+        pthread_mutex_unlock(&cars_mutex);
+        return;
     }
 
     pthread_mutex_unlock(&cars_mutex);
@@ -350,6 +424,7 @@ void handleCallRequest(const char *source_floor, const char *destination_floor, 
     send(client_fd, error, len, 0);
 }
 
+// handleConnection: thread entry to process a single client (car or call pad)
 void *handleConnection(void *arg)
 {
     int sockfd = *(int *)arg;
@@ -445,6 +520,7 @@ void *handleConnection(void *arg)
     return NULL;
 }
 
+// main: controller server loop accepting connections and dispatching threads
 int main(int argc, char *argv[])
 {
     if (argc != 1)
