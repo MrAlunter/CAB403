@@ -122,7 +122,7 @@ static bool is_valid_status(const char *const status)
 
 static int validate_args(const int argc, char *const argv[], const char **car_name)
 {
-    // MISRA C: Rule 17.7 - Check pointer validity
+
     if ((argv == NULL) || (car_name == NULL))
     {
         return SAFETY_ERROR_ARGS;
@@ -134,7 +134,6 @@ static int validate_args(const int argc, char *const argv[], const char **car_na
         return SAFETY_ERROR_ARGS;
     }
 
-    // MISRA C: Rule 17.7 - Check pointer validity
     if (argv[1] == NULL)
     {
         fprintf(stderr, "Car name cannot be NULL\n");
@@ -187,15 +186,15 @@ int main(int argc, char *argv[])
         return SAFETY_ERROR_MAP;
     }
 
-    /* Close fd after successful mmap */
+    //  Close fd after successful mmap
     close(fd);
 
     printf("Safety system for car '%s' is running.\n", car_name);
 
-    /* MISRA C Exception 2: Infinite loop for safety system */
+    // MISRA C Exception: Infinite loop for safety system
     for (;;)
     {
-        /* MISRA C Exception 1: Use of pthread functions */
+        //  MISRA C Exception: Use of pthread functions
         const int lock_result = pthread_mutex_lock(&shm_ptr->mutex);
         if (lock_result != 0)
         {
@@ -203,7 +202,7 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        /* MISRA C Exception 1: Use of pthread functions */
+        // MISRA C Exception: Use of pthread functions
         const int wait_result = pthread_cond_wait(&shm_ptr->cond, &shm_ptr->mutex);
         if (wait_result != 0)
         {
@@ -212,14 +211,14 @@ int main(int argc, char *argv[])
             continue;
         }
 
-        /* Activate safety system if not already active */
+        //  Activate safety system if not already active
         if (shm_ptr->safety_system != 1U)
         {
             shm_ptr->safety_system = 1U;
             pthread_cond_broadcast(&shm_ptr->cond);
         }
 
-        /* Door obstruction check */
+        //  Door obstruction check
         if ((shm_ptr->door_obstruction == 1U) &&
             (0 == strcmp(shm_ptr->status, "Closing")))
         {
@@ -231,7 +230,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        /* Emergency stop check */
+        //  Emergency stop check
         if ((shm_ptr->emergency_stop == 1U) &&
             (shm_ptr->emergency_mode == 0U))
         {
@@ -241,7 +240,7 @@ int main(int argc, char *argv[])
             pthread_cond_broadcast(&shm_ptr->cond);
         }
 
-        /* Overload check */
+        // Overload check
         if ((shm_ptr->overload == 1U) &&
             (shm_ptr->emergency_mode == 0U))
         {
@@ -250,25 +249,25 @@ int main(int argc, char *argv[])
             pthread_cond_broadcast(&shm_ptr->cond);
         }
 
-        /* Data Consistency Checks */
+        // Data Consistency Checks
         if (shm_ptr->emergency_mode == 0U)
         {
             bool data_error = false;
 
-            /* Check floor validity */
+            //  Check floor validity
             if ((!is_valid_floor(shm_ptr->current_floor)) ||
                 (!is_valid_floor(shm_ptr->destination_floor)))
             {
                 data_error = true;
             }
 
-            /* Check status validity */
+            // Check status validity
             if (!is_valid_status(shm_ptr->status))
             {
                 data_error = true;
             }
 
-            /* Check boolean fields are binary */
+            // Check boolean fields are binary
             const uint8_t bool_mask =
                 (shm_ptr->open_button |
                  shm_ptr->close_button |
@@ -284,7 +283,7 @@ int main(int argc, char *argv[])
                 data_error = true;
             }
 
-            /* Check door obstruction state consistency */
+            // Check door obstruction state consistency
             if ((shm_ptr->door_obstruction == 1U) &&
                 (0 != strcmp(shm_ptr->status, "Opening")) &&
                 (0 != strcmp(shm_ptr->status, "Closing")))
@@ -303,7 +302,7 @@ int main(int argc, char *argv[])
         pthread_mutex_unlock(&shm_ptr->mutex);
     }
 
-    /* Cleanup on exit - should not be reached due to infinite loop */
+    // Cleanup on exit - should not be reached due to infinite loop
     const int unmap_result = munmap(shm_ptr, sizeof(car_shared_mem));
     if (unmap_result != 0)
     {
