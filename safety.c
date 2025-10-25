@@ -268,17 +268,14 @@ int main(int argc, char *argv[])
             }
 
             // Check boolean fields are binary
-            const uint8_t bool_mask =
-                (shm_ptr->open_button |
-                 shm_ptr->close_button |
-                 shm_ptr->safety_system |
-                 shm_ptr->door_obstruction |
-                 shm_ptr->overload |
-                 shm_ptr->emergency_stop |
-                 shm_ptr->individual_service_mode |
-                 shm_ptr->emergency_mode);
-
-            if (bool_mask > 1U)
+            if (shm_ptr->open_button > 1U ||
+                shm_ptr->close_button > 1U ||
+                shm_ptr->safety_system > 1U ||
+                shm_ptr->door_obstruction > 1U ||
+                shm_ptr->overload > 1U ||
+                shm_ptr->emergency_stop > 1U ||
+                shm_ptr->individual_service_mode > 1U ||
+                shm_ptr->emergency_mode > 1U)
             {
                 data_error = true;
             }

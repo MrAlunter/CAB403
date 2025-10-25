@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>    // For O_RDWR
 #include <sys/mman.h> // For shm_open, mmap

@@ -269,27 +269,46 @@ void *network_thread_function(void *args)
             {
                 uint16_t msg_len = ntohs(msg_len_network);
                 char recv_buffer[BUFFER_SIZE];
-                ssize_t total_received = 0;
 
-                // Receive the message in one go
-                ssize_t n = recv(sockfd, recv_buffer, msg_len, 0);
-                if (n != msg_len)
+                ssize_t total_received = 0;
+                while (total_received < msg_len)
                 {
+                    ssize_t n = recv(sockfd, recv_buffer + total_received, msg_len - total_received, 0);
+                    if (n > 0)
+                    {
+                        total_received += n;
+                        continue;
+                    }
+                    if (n == 0)
+                    {
+                        /* connection closed by peer */
+                        should_disconnect = 1;
+                        break;
+                    }
+                    /* n < 0 */
+                    if (errno == EWOULDBLOCK || errno == EAGAIN)
+                    {
+                        /* No data available right now; wait a little and retry */
+                        usleep(1000);
+                        continue;
+                    }
+                    /* Other error - treat as disconnect */
                     should_disconnect = 1;
-                    continue;
+                    break;
                 }
 
                 if (should_disconnect)
                     continue;
 
-                recv_buffer[msg_len] = '\0';
+                recv_buffer[total_received] = '\0';
                 printf("Received from controller: [%s]\n", recv_buffer);
 
                 if (strncmp(recv_buffer, "FLOOR ", 6) == 0)
                 {
                     char *floor = recv_buffer + 6;
                     pthread_mutex_lock(&shm_ptr->mutex);
-                    strcpy(shm_ptr->destination_floor, floor);
+                    strncpy(shm_ptr->destination_floor, floor, sizeof(shm_ptr->destination_floor) - 1);
+                    shm_ptr->destination_floor[sizeof(shm_ptr->destination_floor) - 1] = '\0';
                     if (strcmp(shm_ptr->current_floor, floor) == 0 && strcmp(shm_ptr->status, "Closed") == 0)
                     {
                         shm_ptr->open_button = 1;
